@@ -1,0 +1,21 @@
+{
+  "name": "Slime Volley",
+  "genre": "sports",
+  "dim": "2D",
+  "mode": "Versus",
+  "players": "2–4",
+  "hook": "Jump, bonk, don't let it touch your sand.",
+  "how": "Run and jump your slime to bounce the ball over the net. If it lands on your side, the other side scores. First to 7 wins; with 3 or 4 players it's two a side.",
+  "controls": "A/D or arrows to move, W, ↑ or Space to jump · touch: ◀ ▶ and JUMP buttons",
+  "uses": [
+    ["Host-run physics", "One player's browser moves the ball and keeps the score, so both sides see the same bounce; if it leaves, the next player takes over."],
+    ["Bots", "A bot plays the other side until a friend joins, and fills any empty spot in two-a-side."],
+    ["Leaderboard", "Most wins, for every player."],
+    ["Live sync", "Every slime and the ball move for everyone at once."]
+  ],
+  "ideas": [
+    "Make the net higher and the ball lighter",
+    "Add a power smash when you jump twice",
+    "Make it a snowy mountain with a snowball"
+  ]
+}

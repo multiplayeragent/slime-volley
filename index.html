@@ -1,0 +1,695 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Slime Volley</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; background: #7ec8e3; }
+  body { font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #fff; user-select: none; -webkit-user-select: none; }
+  canvas { display: block; width: 100vw; height: 100vh; height: 100dvh; touch-action: none; }
+  [hidden] { display: none !important; }
+  .hud { position: fixed; pointer-events: none; text-shadow: 0 2px 5px #0006; left: 0; right: 0; text-align: center; }
+  #score { top: max(8px, env(safe-area-inset-top)); display: flex; justify-content: center; align-items: flex-start; gap: 18px; }
+  #score .side { min-width: 110px; }
+  #score b { display: block; font: 900 44px/1 system-ui, sans-serif; font-variant-numeric: tabular-nums; }
+  #score small { display: block; font-size: 12px; font-weight: 700; opacity: .95; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; margin: 0 auto; }
+  #score i { font: 700 13px/44px system-ui, sans-serif; font-style: normal; opacity: .85; }
+  #hint { top: calc(max(8px, env(safe-area-inset-top)) + 70px); font-size: 14px; font-weight: 600; transition: opacity 1s; }
+  #msg { top: 34%; transform: translateY(-50%); font: 900 min(14vw, 72px)/1 system-ui, sans-serif; -webkit-text-stroke: 2px #0003; opacity: 0; transition: opacity .2s, transform .2s; }
+  #msg small { display: block; margin-top: 8px; font-size: 18px; font-weight: 700; -webkit-text-stroke: 0; }
+  #msg.on { opacity: 1; transform: translateY(-50%) scale(1.06); }
+  #net { bottom: max(6px, env(safe-area-inset-bottom)); font-size: 12px; opacity: .85; }
+  .pad { position: fixed; bottom: calc(max(14px, env(safe-area-inset-bottom)) + 18px); display: flex; gap: 12px; touch-action: none; }
+  .pad button { width: 76px; height: 76px; border-radius: 50%; border: 3px solid #ffffffaa; background: #ffffff38; color: #fff; font: 900 22px system-ui, sans-serif; touch-action: none; text-shadow: 0 1px 3px #0005; }
+  .pad button.on { background: #ffffff88; }
+  #move { left: max(14px, env(safe-area-inset-left)); } #acts { right: max(14px, env(safe-area-inset-right)); }
+  #acts button { width: 92px; height: 92px; font-size: 17px; }
+  #over { position: fixed; inset: 0; display: grid; place-items: center; background: #0a2a3cb0; }
+  .card { box-sizing: border-box; width: min(380px, calc(100vw - 32px)); max-height: 86vh; overflow: auto; padding: 22px; border-radius: 18px; background: #0f3a52; border: 1px solid #ffffff33; text-align: center; }
+  .card h2 { margin: 0 0 4px; font-size: 28px; }
+  .card h3 { margin: 14px 0 4px; font-size: 14px; color: #ffd166; text-align: left; }
+  .card ol { text-align: left; margin: 0; padding-left: 26px; font-size: 14px; min-height: 22px; }
+  .card li span { float: right; font-variant-numeric: tabular-nums; }
+  .card p { margin: 8px 0 0; font-size: 13px; opacity: .8; }
+  #final { font: 800 20px system-ui, sans-serif; }
+  button.go { width: 100%; min-height: 48px; margin-top: 14px; border: 0; border-radius: 12px; background: #ffd166; color: #3a2400; font: 800 17px system-ui, sans-serif; cursor: pointer; }
+</style>
+<script src="https://cdn.multiplayeragent.com/sdk/mp.global.js"></script>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div class="hud" id="score"><div class="side"><b id="s0">0</b><small id="n0"></small></div><i id="to"></i><div class="side"><b id="s1">0</b><small id="n1"></small></div></div>
+<div class="hud" id="hint"></div>
+<div class="hud" id="msg"></div>
+<div class="hud" id="net">Connecting…</div>
+<div class="pad" id="move" hidden><button data-k="left">◀</button><button data-k="right">▶</button></div>
+<div class="pad" id="acts" hidden><button data-k="jump">JUMP</button></div>
+<div id="over" hidden><div class="card">
+  <h2 id="winner"></h2><div id="final"></div>
+  <h3>Most wins</h3><ol id="board"><li>Loading…</li></ol>
+  <button class="go" id="again">Play again</button><p id="next"></p>
+</div></div>
+<script>
+/* ═══ SLIME VOLLEY · a Multiplayer Agent starter ═══════════════════════════════════════
+ * Half-circle slimes jump to bounce a volleyball over the net. Don't let it land on your
+ * side. First to 7. Versus, 2–4 players: 1 a side, 2 a side when 3 or more are here;
+ * bots fill the empty spots, so alone you play a bot.
+ *
+ * WHERE THINGS ARE (search for the "── " headers):
+ *   CONFIG ........ points to win, court and net size, jumping, the ball's bounce, the bots
+ *   CONNECTION .... MP_CONNECT, joining, the offline room, who is host
+ *   COURT ......... sizes, where each slime stands, moving a slime
+ *   PHYSICS ....... the ball: gravity, slimes, the net, walls, the sand (the host and everyone's prediction use it)
+ *   MATCH (HOST) .. sides, score, serves, the winner. Only the host writes these.
+ *   BOTS .......... the bot brain: guess where the ball comes down, get behind it, jump to spike
+ *   ME ............ running and jumping, my own hits on the ball
+ *   DRAW .......... beach, net, slimes whose eyes follow the ball, the ball and its shadow
+ *   HUD & RESULTS . score, messages, results card, leaderboard
+ *   INPUT ......... keyboard, and ◀ ▶ JUMP buttons on touch
+ *
+ * HOW THE MULTIPLAYER WORKS (a relay room: no server code):
+ *   - Each player writes its OWN entity: `p` {x, y, vx, vy} (its slime, in court units) about
+ *     15 times a second, `hb` (heartbeat) once a second, `rdy` (Play again), `n`/`c` once.
+ *   - The HOST is the lowest sessionId among live players (heartbeat seen in the last 3s), worked
+ *     out every frame. Only the host writes the shared fields:
+ *       `game` {id, v, phase, teams, score, pt, serve, serveAt, resumeAt, win, overAt, last}: who
+ *              plays on which side (sessionIds, or bot ids "b1".."b4"), the score, the serve.
+ *              `v` goes up on every write; `pt` counts points (everyone walks back to their spot).
+ *       `ball` {x, y, vx, vy, h, s, z, b}: the ball ~15 times a second (h = hits so far, s = write
+ *              number, z = 1 while it hangs for a serve, b = the bot slimes).
+ *   - The host moves the ball against gravity, the net, the walls, its own slime and the bots.
+ *     Everyone else runs the ball on their own screen between writes and decides THEIR OWN hits:
+ *     when your slime touches the ball on your screen, it bounces at once and you send "hit"
+ *     {x, y, vx, vy, g, pt}; the host checks it is plausible and adopts it. A ball that lands on
+ *     your side on the host's screen waits `groundGrace` ms for your save before it counts.
+ *   - Someone new takes a bot's spot and a fresh match starts; someone who leaves is replaced
+ *     by a bot and the match goes on. A new host adopts `game` and `ball` and carries on.
+ *   - ?attract plays offline, bots only, two a side (the preview video is recorded from it).
+ *   - Leaderboard "wins": each match your side wins adds 1 to your total.
+ */
+
+// ── CONFIG ──────────────────────────────────────────────────────────────────────────
+const CONFIG = {
+  pointsToWin: 7,
+  teamSize: 1,          // slimes a side while 1–2 people are here (bots fill the rest)
+  maxTeam: 2,           // with 3–4 people it's two a side
+  courtW: 1000,         // court width in court units (the net is in the middle)
+  netH: 130, netW: 14,  // net height and thickness
+  slimeR: 72, ballR: 21,
+  gravity: 1150,        // pulls the ball down, units/s²
+  slimeGravity: 2700,   // pulls slimes down (heavier than the ball: snappy jumps)
+  jump: 930,            // a slime's jump speed, units/s
+  runSpeed: 440,        // units/s
+  pop: 640,             // a slime always sends the ball away at least this fast
+  bounce: 0.95,         // how much speed a bounce off a slime keeps
+  wallBounce: 0.85,     // ... off a wall or the net
+  maxBall: 1250,        // fastest the ball can go, units/s
+  botSpeed: 0.86,       // bots run at this share of top speed
+  botError: 26,         // how far off bots stand, units
+  botThink: 130,        // ms between bot decisions
+  botSpike: 0.5,        // chance a bot by the net jumps to smash a ball coming down
+  botJump: 0.25,        // chance a bot further back jumps to hit a ball harder
+  botMiss: 0.12,        // chance a bot misreads where a ball will come down
+  botReact: 260,        // ms a bot takes to react after each touch (it keeps going where it was going)
+  servePause: 1000,     // ms the ball hangs before a serve drops
+  pointMs: 1300,        // ms after a point before the next serve
+  resultsMs: 9000,      // ms on the results card before the next match
+  sendMs: 66,           // my slime and the ball (~15 a second)
+  groundGrace: 180,     // ms someone else has to save a ball that landed on their side on the host's screen
+  board: "wins",
+};
+const SIDE_COLORS = ["#ff7a59", "#2ec4b6"], SIDE_NAMES = ["Coral", "Lagoon"]; // left side, right side
+const COLORS = ["#ff5d8f", "#ffd23f", "#3a86ff", "#06d6a0", "#b388ff", "#ff9f1c", "#8ac926", "#f15bb5"]; // each person's slime
+const BOT_NAMES = ["", "Gloop", "Bouncer", "Jelly", "Splat"]; // bot "b2" is Bouncer; bots wear the colors no person has
+
+// ── CONNECTION ──────────────────────────────────────────────────────────────────────
+// The builder fills these in for this game. Downloaded from GitHub? Put your own pk_ key here.
+const MP_CONNECT = {
+  key: 'pk_REPLACE_ME',
+  room: 'slime-volley',
+  endpoint: 'wss://live.multiplayeragent.com',
+  apiUrl: 'https://api.multiplayeragent.com',
+};
+const ATTRACT = new URLSearchParams(location.search).has("attract");
+
+/** Same shape as the SDK client, kept in this tab: offline play and ?attract. */
+function localRoom() {
+  const id = "local", state = { entities: { players: { [id]: {} } }, shared: {} }, subs = [];
+  let queued = false;
+  const emit = () => { if (!queued) { queued = true; queueMicrotask(() => { queued = false; subs.forEach((f) => f(state)); }); } };
+  const put = (o, k, v) => { if (typeof k === "object") Object.assign(o, k); else o[k] = v; emit(); };
+  return {
+    sessionId: id, state, offline: true,
+    me: { set: (k, v) => put(state.entities.players[id], k, v) },
+    setShared: (k, v) => put(state.shared, k, v),
+    onState: (f) => { subs.push(f); f(state); }, onJoin() {}, onLeave() {}, on() {}, send() {},
+    onDisconnect() {}, onReconnect() {}, leave: async () => {},
+  };
+}
+async function connect() {
+  if (ATTRACT || typeof MP === "undefined") return localRoom();
+  try {
+    const mp = await Promise.race([MP.join({ ...MP_CONNECT }), new Promise((_, no) => setTimeout(() => no(new Error("timed out")), 10000))]);
+    window.mp = mp; // the builder calls window.mp.leave() when the page closes
+    return mp;
+  } catch (e) {
+    console.warn("Playing offline:", e && e.message);
+    return localRoom();
+  }
+}
+const parse = (v, fb) => { if (typeof v !== "string") return fb; try { return JSON.parse(v); } catch { return fb; } };
+const memo = new Map();
+/** A JSON field, parsed once per change (read-only: never mutate what this returns). */
+function cached(key, raw, fb) { const m = memo.get(key); if (m && m.raw === raw) return m.v; const v = parse(raw, fb); memo.set(key, { raw, v }); return v; }
+let net = null, S = { entities: { players: {} }, shared: {} };
+const seenHb = new Map();
+/** Players whose heartbeat moved in the last 3s (plus us), sorted by sessionId. */
+function livePlayers() {
+  const now = performance.now(), out = [];
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    const s = seenHb.get(id);
+    if (!s || s.hb !== p.hb) seenHb.set(id, { hb: p.hb, at: now });
+    if (id === net.sessionId || now - seenHb.get(id).at < 3000) out.push(id);
+  }
+  return out.sort();
+}
+const isHost = () => livePlayers()[0] === net.sessionId;
+const humans = () => livePlayers().filter((id) => !(ATTRACT && id === net.sessionId)); // in the preview you only watch
+
+// ── COURT ───────────────────────────────────────────────────────────────────────────
+// Court units: x runs -HW..HW (the net at 0), y is height above the sand (up is +).
+// Side 0 (Coral) plays on the left, side 1 (Lagoon) on the right.
+const HW = CONFIG.courtW / 2, NW = CONFIG.netW / 2, R = CONFIG.slimeR;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const away = (team) => (team === 0 ? -1 : 1); // which way from the net a side's half is
+const HOMES = { 1: [250], 2: [370, 135] };     // how far from the net each slime stands, for 1 or 2 a side
+const homeOf = (team, i, size) => away(team) * ((HOMES[size] || HOMES[2])[i] ?? 250);
+/** Run and jump a slime (dir -1..1, jump = pressed), kept on its own side of the net. */
+function moveSlime(s, dir, jump, dt, team, speedShare) {
+  s.vx = dir * CONFIG.runSpeed * speedShare;
+  if (jump && s.y <= 0) { s.vy = CONFIG.jump; s.hop = 1; }
+  s.vy -= CONFIG.slimeGravity * dt; s.x += s.vx * dt; s.y += s.vy * dt;
+  if (s.y <= 0) { if (s.vy < -500) s.land = 1; s.y = 0; s.vy = 0; }
+  s.x = team === 0 ? clamp(s.x, -HW + R, -NW - R * 0.85) : clamp(s.x, NW + R * 0.85, HW - R);
+}
+/** Teammates don't overlap: push slime `s` sideways out of `o` by half the overlap. */
+function pushApart(s, o) {
+  const dx = s.x - o.x, dy = s.y - o.y, d = Math.hypot(dx, dy), min = R * 1.8;
+  if (d < min && d > 0.001) s.x += (dx / d) * (min - d) * 0.5;
+}
+
+// ── PHYSICS ─────────────────────────────────────────────────────────────────────────
+/** Move the ball dt seconds: gravity, `slimes` ({x, y, vx, vy}), the net, the walls, the sand.
+ *  Returns { hit: the slime that hit it or null, wall, net, ground: the side it landed on, or -1 }. */
+function stepBall(b, dt, slimes) {
+  const out = { hit: null, wall: false, net: false, ground: -1 }, r = CONFIG.ballR;
+  const n = Math.max(1, Math.ceil((Math.hypot(b.vx, b.vy) * dt) / 6));
+  for (let i = 0; i < n; i++) {
+    const h = dt / n;
+    b.vy -= CONFIG.gravity * h; b.x += b.vx * h; b.y += b.vy * h;
+    for (const s of slimes) { // a slime is a dome: bounce off its round top
+      const dx = b.x - s.x, dy = b.y - s.y, d = Math.hypot(dx, dy), min = r + R;
+      if (d >= min || d < 0.001 || dy < -r * 0.5) continue;
+      const nx = dx / d, ny = dy / d, rel = (b.vx - s.vx) * nx + (b.vy - s.vy) * ny;
+      b.x = s.x + nx * min; b.y = s.y + ny * min;
+      const want = Math.max(-rel * CONFIG.bounce, CONFIG.pop); // always pops off at a decent speed
+      if (rel < want) { b.vx += (want - rel) * nx; b.vy += (want - rel) * ny; out.hit = s; }
+    }
+    const cx = clamp(b.x, -NW, NW), cy = clamp(b.y, 0, CONFIG.netH), ndx = b.x - cx, ndy = b.y - cy, nd = Math.hypot(ndx, ndy);
+    if (nd < r) { // the net (a post with a flat top)
+      const nx = nd > 0.001 ? ndx / nd : Math.sign(b.x) || 1, ny = nd > 0.001 ? ndy / nd : 0, rel = b.vx * nx + b.vy * ny;
+      b.x = cx + nx * r; b.y = cy + ny * r;
+      if (rel < 0) { b.vx -= (1 + CONFIG.wallBounce) * rel * nx; b.vy -= (1 + CONFIG.wallBounce) * rel * ny; out.net = true; }
+      if (ny > 0.9 && Math.abs(b.vx) < 40) b.vx = (b.x >= 0 ? 1 : -1) * 80; // never balance on top of the net
+    }
+    if (Math.abs(b.x) > HW - r) { b.x = Math.sign(b.x) * (HW - r); b.vx = -b.vx * CONFIG.wallBounce; out.wall = true; }
+    if (b.y < r) { b.y = r; out.ground = b.x < 0 ? 0 : 1; b.vy = Math.abs(b.vy) * 0.45; b.vx *= 0.7; }
+  }
+  const sp = Math.hypot(b.vx, b.vy); if (sp > CONFIG.maxBall) { b.vx *= CONFIG.maxBall / sp; b.vy *= CONFIG.maxBall / sp; }
+  return out;
+}
+
+// ── MATCH (HOST) ────────────────────────────────────────────────────────────────────
+const host = { last: null, wasHost: false, bots: new Map(), lastBall: 0, lastBody: "", pending: null };
+let ball = { x: -250, y: 330, vx: 0, vy: 0, h: 0, s: 0, z: 1 }; // the host's real ball; everyone else's prediction of it
+const isBot = (id) => /^b\d$/.test(id);
+const teamOf = (g, id) => (g.teams[0].includes(id) ? 0 : g.teams[1].includes(id) ? 1 : -1);
+/** The game as state has it, or the host's own newer write that hasn't come back yet. `v` only goes up. */
+function game() {
+  const g = cached("game", S.shared.game, null);
+  return host.last && isHost() && (!g || host.last.v > g.v) ? host.last : g;
+}
+function writeGame(g) { g = { ...g, v: (game()?.v ?? 0) + 1 }; host.last = g; net.setShared("game", JSON.stringify(g)); return g; }
+const teamSize = (people) => (people <= 2 ? CONFIG.teamSize : CONFIG.maxTeam);
+/** Bots in every empty spot (null), and both sides filled up to `size`. */
+function fillBots(teams, size) {
+  const used = new Set(teams.flat());
+  const newBot = () => { let k = 1; while (used.has("b" + k)) k++; used.add("b" + k); return "b" + k; };
+  return teams.map((t) => { t = t.map((id) => id || newBot()); while (t.length < size) t.push(newBot()); return t.slice(0, Math.max(size, t.filter((id) => !isBot(id)).length)); });
+}
+/** A fresh match: the people here shuffled onto the two sides, bots in the gaps, 0–0. */
+function newGame(id) {
+  const people = humans().sort(() => Math.random() - 0.5), teams = [[], []];
+  people.slice(0, CONFIG.maxTeam * 2).forEach((p, i) => teams[i % 2].push(p));
+  const serve = Math.random() < 0.5 ? 0 : 1;
+  return { id, phase: "play", teams: fillBots(teams, teamSize(people.length)), score: [0, 0], pt: 1, serve, serveAt: Date.now() + CONFIG.servePause + 900, resumeAt: 0, win: -1, overAt: 0, last: -1 };
+}
+/** Everyone to their spot (bots here; people move themselves when they see `pt` change) and the ball up over the server. */
+function serveReset(g) {
+  for (const b of host.bots.values()) { const k = teamOf(g, b.id); if (k >= 0) Object.assign(b, { x: homeOf(k, g.teams[k].indexOf(b.id), g.teams[k].length), y: 0, vx: 0, vy: 0 }); }
+  const sx = homeOf(g.serve, 0, g.teams[g.serve].length) - away(g.serve) * 14; // a little toward the net, so a plain bump goes forward
+  Object.assign(ball, { x: sx, y: 330, vx: 0, vy: 0, z: 1 }); host.pending = null; writeBall();
+}
+function writeBall(onlyIfMoved) {
+  const r = Math.round, b = [...host.bots.values()].map((q) => [q.id, r(q.x), r(q.y), r(q.vx), r(q.vy)]);
+  const body = JSON.stringify({ x: r(ball.x), y: r(ball.y), vx: r(ball.vx), vy: r(ball.vy), h: ball.h, z: ball.z, b });
+  host.lastBall = performance.now();
+  if (onlyIfMoved && body === host.lastBody) return; // nothing moved: save the message
+  host.lastBody = body; ball.s++;
+  net.setShared("ball", body.slice(0, -1) + `,"s":${ball.s}}`);
+}
+const newBotSlime = (id, x, y = 0, vx = 0, vy = 0) => ({ id, x, y, vx, vy, land: 0, hop: 0, thinkAt: 0, tx: x, jumpAt: 0, err: 0, seenH: -1, off: R * 0.38, miss: 0, reactAt: 0 });
+/** Become host: take over the game, the ball and the bots exactly as state has them. */
+function adopt() {
+  host.wasHost = true; host.pending = null; host.bots.clear();
+  const s = parse(S.shared.ball, null);
+  if (s) { // our own screen has been running the ball on from this write: keep that (the write can be seconds old if the old host froze)
+    if (s.s !== pred.lastS) Object.assign(ball, { x: s.x, y: s.y, vx: s.vx, vy: s.vy, h: s.h, z: s.z });
+    ball.s = s.s;
+    for (const [id, x, y, vx, vy] of s.b || []) host.bots.set(id, newBotSlime(id, x, y, vx, vy));
+  }
+}
+/** host.bots holds exactly the bots on the court. */
+function syncBots(g) {
+  for (const id of g.teams.flat()) if (isBot(id) && !host.bots.has(id)) { const k = teamOf(g, id); host.bots.set(id, newBotSlime(id, homeOf(k, g.teams[k].indexOf(id), g.teams[k].length))); }
+  for (const id of [...host.bots.keys()]) if (teamOf(g, id) < 0) host.bots.delete(id);
+}
+/** Seats: someone who left is replaced by a bot (the match goes on); someone new takes a bot's spot (a fresh match). */
+function checkSeats(g) {
+  const people = humans(), seated = g.teams.flat();
+  const fresh = people.some((id) => !seated.includes(id)) && (seated.some(isBot) || teamSize(people.length) > g.teams[0].length);
+  if (fresh && g.phase !== "over") { const n = writeGame(newGame(g.id + 1)); syncBots(n); serveReset(n); return n; }
+  const teams = g.teams.map((t) => t.map((id) => (isBot(id) || people.includes(id) ? id : null)));
+  if (!teams.flat().includes(null)) return g;
+  const n = writeGame({ ...g, teams: fillBots(teams, g.teams[0].length) }); syncBots(n); return n;
+}
+/** The ball came down on `side`: a point for the other side, maybe the match. */
+function scorePoint(g, side, t) {
+  const team = 1 - side, score = [...g.score]; score[team]++;
+  const win = score[team] >= CONFIG.pointsToWin ? team : -1;
+  return writeGame({ ...g, phase: "point", score, serve: team, last: team, win, resumeAt: t + CONFIG.pointMs });
+}
+function hostTick(dt, now) {
+  if (!host.wasHost) adopt();
+  const t = Date.now();
+  let g = game();
+  if (!g) { g = writeGame(newGame(1)); syncBots(g); serveReset(g); }
+  g = checkSeats(g); syncBots(g);
+  if (g.phase === "point" && t >= g.resumeAt) {
+    if (g.win >= 0) g = writeGame({ ...g, phase: "over", overAt: t + CONFIG.resultsMs });
+    else { g = writeGame({ ...g, phase: "play", pt: g.pt + 1, serveAt: t + CONFIG.servePause }); serveReset(g); }
+  }
+  if (g.phase === "over") {
+    const seated = g.teams.flat().filter((id) => !isBot(id));
+    const ready = seated.length && seated.every((id) => (id === net.sessionId ? myReady : (S.entities.players[id] || {}).rdy) === g.id);
+    if (t > g.overAt || ready) { g = writeGame(newGame(g.id + 1)); syncBots(g); serveReset(g); }
+  }
+  for (const b of host.bots.values()) botTick(b, g, dt, now, t);
+  const live = g.phase === "play" && t >= g.serveAt;
+  if (live || g.phase === "point") { // after a point the ball just bounces on the sand
+    ball.z = 0;
+    const slimes = live ? [...host.bots.values()] : [];
+    if (live && teamOf(g, net.sessionId) >= 0) slimes.push(me);
+    const res = host.pending ? { hit: null } : stepBall(ball, dt, slimes);
+    if (res.hit) { ball.h++; hitFx(); writeBall(); }
+    if (res.wall || res.net) bumpFx();
+    if (live && res.ground >= 0 && !host.pending) { // landed: count it now, or give someone else's screen a moment to send a save
+      const remote = g.teams[res.ground].some((id) => !isBot(id) && id !== net.sessionId);
+      host.pending = { side: res.ground, at: now + (remote ? CONFIG.groundGrace : 0) };
+    }
+    if (live && host.pending && now >= host.pending.at) { g = scorePoint(g, host.pending.side, t); host.pending = null; }
+  } else ball.z = 1;
+  if (now - host.lastBall > CONFIG.sendMs) writeBall(true);
+}
+/** A "hit" from a player on someone else's screen: adopt its bounce if it happened near where the host has the ball. */
+function applyHit(msg, from) {
+  const g = game(), team = g ? teamOf(g, from) : -1;
+  if (!g || g.phase !== "play" || msg.g !== g.id || msg.pt !== g.pt || Date.now() < g.serveAt || team < 0) return;
+  const x = +msg.x, y = +msg.y, vx = +msg.vx, vy = +msg.vy;
+  if (!isFinite(x + y + vx + vy) || Math.hypot(x - ball.x, y - ball.y) > 300 || x * away(team) < -60) return; // near the ball, on their own side
+  const k = Math.min(1, CONFIG.maxBall / (Math.hypot(vx, vy) || 1));
+  Object.assign(ball, { x, y, vx: vx * k, vy: vy * k, z: 0 }); ball.h++;
+  if (host.pending && host.pending.side === team) host.pending = null; // saved just above the sand
+  hitFx(); writeBall();
+}
+
+// ── BOTS ────────────────────────────────────────────────────────────────────────────
+/** Where a slime is on this screen: mine, a bot (the host's live one, or eased from state), or another person. */
+function slimeOf(id) { return id === net.sessionId ? me : (host.wasHost && host.bots.get(id)) || views.get(id) || null; }
+/** Run a copy of the ball forward (no slimes) until it comes down to height `h`: where is it then? */
+function landing(h) {
+  const b = { x: ball.x, y: ball.y, vx: ball.vx, vy: ball.vy };
+  for (let i = 0; i < 180; i++) { stepBall(b, 1 / 60, []); if (b.vy < 0 && b.y <= h) return b.x; }
+  return b.x;
+}
+function botTick(b, g, dt, now, t) {
+  const team = teamOf(g, b.id), list = g.teams[team], slot = list.indexOf(b.id), side = away(team);
+  b.land = Math.max(0, b.land - dt * 4); b.hop = Math.max(0, b.hop - dt * 4);
+  if (now > b.thinkAt) {
+    b.thinkAt = now + CONFIG.botThink * (0.7 + Math.random() * 0.6);
+    b.err = (Math.random() - 0.5) * 2 * CONFIG.botError;
+    if (ball.h !== b.seenH) { // a new touch: pick how to play this one
+      b.seenH = ball.h; b.off = R * (0.2 + Math.random() * 0.45); b.reactAt = now + CONFIG.botReact * (0.6 + Math.random() * 0.8);
+      b.miss = Math.random() < CONFIG.botMiss ? (Math.random() < 0.5 ? -1 : 1) * R * (0.9 + Math.random() * 0.6) : 0;
+    }
+    const home = homeOf(team, slot, list.length);
+    const landX = g.phase === "play" ? landing(R + CONFIG.ballR * 0.5) : home;
+    const mine = landX * side > 0 && (list.length < 2 || (slot === 0) === Math.abs(landX) > 250 || !slimeOf(list[1 - slot]));
+    if (now >= b.reactAt) b.tx = mine ? landX + side * b.off + b.err + b.miss : home; // stand a bit behind where it lands, so the bounce goes over the net
+    const dx = ball.x - b.x, high = ball.y - R, front = -dx * side > R * 0.25; // the ball is on my net side: a jump drives it forward, not straight up
+    const coming = Math.abs(dx) < R * 1.2 && front && ball.vy < 0 && high > 110 && high < 300;
+    const tight = mine && Math.abs(landX) < R + 70; // too close to the net to get behind it: jump and pop it over
+    const chance = tight ? 0.9 : Math.abs(b.x) < 260 ? CONFIG.botSpike : CONFIG.botJump; // by the net: jump and smash it
+    if (g.phase === "play" && t >= g.serveAt && coming && !b.miss && Math.random() < chance) b.jumpAt = now + Math.random() * 60;
+  }
+  const dx = b.tx - b.x, dir = Math.abs(dx) < 8 ? 0 : clamp(dx / 40, -1, 1);
+  const jump = b.jumpAt && now >= b.jumpAt; if (jump) b.jumpAt = 0;
+  moveSlime(b, g.phase === "over" ? 0 : dir, jump, dt, team, CONFIG.botSpeed);
+  for (const id of list) { const o = id !== b.id && slimeOf(id); if (o) pushApart(b, o); }
+}
+
+// ── ME ──────────────────────────────────────────────────────────────────────────────
+let myName = "";
+try { myName = localStorage.getItem("mpa-name") || ""; } catch {}
+myName = myName || ["Wobbly", "Bouncy", "Sticky", "Jiggly", "Lucky", "Turbo"][Math.floor(Math.random() * 6)] + " " + ["Slime", "Blob", "Gumdrop", "Jelly", "Goo"][Math.floor(Math.random() * 5)];
+let myColor = COLORS[0], myReady = 0; // the color is picked on join: the first one nobody in the room has
+const me = { x: -250, y: 0, vx: 0, vy: 0, land: 0, hop: 0, placed: "", lastSend: 0, lastJson: "", lastHit: 0 };
+const pred = { lastS: -1, mineAt: 0, offX: 0, offY: 0 }; // a non-host's ball prediction
+function myTick(dt, g, now) {
+  const team = teamOf(g, net.sessionId), t = Date.now(), live = g.phase === "play" && t >= g.serveAt;
+  const key = team >= 0 ? `${g.id}:${g.pt}:${team}` : "";
+  if (key !== me.placed) { me.placed = key; if (team >= 0) Object.assign(me, { x: homeOf(team, g.teams[team].indexOf(net.sessionId), g.teams[team].length), y: 0, vx: 0, vy: 0 }); }
+  me.land = Math.max(0, me.land - dt * 4); me.hop = Math.max(0, me.hop - dt * 4);
+  if (team >= 0) {
+    const [dir, jump] = myInput();
+    moveSlime(me, g.phase === "over" ? 0 : dir, jump, dt, team, 1);
+    for (const id of g.teams[team]) { const o = id !== net.sessionId && slimeOf(id); if (o) pushApart(me, o); }
+    const json = JSON.stringify({ x: Math.round(me.x), y: Math.round(me.y), vx: Math.round(me.vx), vy: Math.round(me.vy) });
+    if (now - me.lastSend > CONFIG.sendMs && json !== me.lastJson) { me.lastSend = now; me.lastJson = json; net.me.set("p", json); }
+  }
+  if (isHost()) return;
+  // Not the host: our ball runs on its own between writes. A write replaces it only when something new happened
+  // there (more hits than we know of, a serve), or when we drifted far off. A write is always a little old, so one
+  // with the same hit count would drag the ball back in time (and through our own slime).
+  const s = cached("ball", S.shared.ball, null);
+  if (s && s.s !== pred.lastS) {
+    pred.lastS = s.s;
+    const off = Math.hypot(ball.x - s.x, ball.y - s.y), drift = 60 + Math.hypot(s.vx, s.vy) * 0.25;
+    if (!live || s.h > ball.h || s.z !== ball.z || (s.h === ball.h && off > drift) || (s.h < ball.h && now - pred.mineAt > 500)) {
+      if (s.h > ball.h && off < 300) { pred.offX += ball.x - s.x; pred.offY += ball.y - s.y; } // draw the jump smoothly
+      if (s.h > ball.h) hitFx();
+      Object.assign(ball, { x: s.x, y: s.y, vx: s.vx, vy: s.vy, h: s.h, z: s.z });
+    }
+  }
+  if (ball.z || (!live && g.phase !== "point")) return;
+  const others = g.teams.flat().filter((id) => id !== net.sessionId).map(slimeOf).filter(Boolean);
+  const res = stepBall(ball, dt, live ? (team >= 0 ? [me, ...others] : others) : []);
+  if (res.wall || res.net) bumpFx();
+  if (live && team >= 0 && res.hit === me && now - me.lastHit > 60) { // my slime hit it on my screen: that's the hit
+    me.lastHit = now; ball.h++; pred.mineAt = now; hitFx();
+    const r = Math.round;
+    net.send("hit", { x: r(ball.x), y: r(ball.y), vx: r(ball.vx), vy: r(ball.vy), g: g.id, pt: g.pt });
+  }
+}
+
+// ── DRAW ────────────────────────────────────────────────────────────────────────────
+const cv = document.getElementById("game"), ctx = cv.getContext("2d");
+let W = 0, H = 0, DPR = 1, scale = 1, GY = 0, shake = 0; // GY = where the sand line is on screen
+const VIEW_TOP = 520, SAND = 60; // court units shown above the sand line, and of sand below it
+function fit() {
+  DPR = Math.min(2, devicePixelRatio || 1); W = innerWidth; H = innerHeight; cv.width = W * DPR; cv.height = H * DPR;
+  const touch = matchMedia("(pointer: coarse)").matches && !ATTRACT;
+  scale = Math.min((W - 12) / (CONFIG.courtW + 40), (H - 70) / (VIEW_TOP + SAND));
+  if (touch && W > H) scale = Math.min(scale, (W - 380) / (CONFIG.courtW + 40)); // a phone on its side: the court fits between the buttons
+  GY = Math.max(64 + VIEW_TOP * scale, H * 0.56);
+  if (touch && H > W) GY = H - 170; // a tall phone: the court sits just above the buttons
+}
+addEventListener("resize", fit); addEventListener("orientationchange", fit); fit();
+const sx = (x) => W / 2 + x * scale, sy = (y) => GY - y * scale;
+const views = new Map(); // id -> another person's or (not host) a bot's slime, eased toward its last write
+/** Ease every other slime toward its latest write, guessing ahead with its speed. */
+function syncViews(dt) {
+  const now = performance.now(), k = 1 - Math.exp(-dt * 18), seen = new Set(), src = [];
+  for (const [id, p] of Object.entries(S.entities.players || {})) if (id !== net.sessionId && p.p) src.push([id, p.p, cached("p:" + id, p.p, null)]);
+  if (!isHost()) { const s = cached("ball", S.shared.ball, null); for (const q of (s && s.b) || []) src.push([q[0], s.s, { x: q[1], y: q[2], vx: q[3], vy: q[4] }]); }
+  for (const [id, raw, f] of src) {
+    if (!f || typeof f.x !== "number") continue;
+    seen.add(id);
+    let v = views.get(id);
+    if (!v) { v = { id, x: f.x, y: f.y, vx: 0, vy: 0, tx: f.x, ty: f.y, land: 0, hop: 0, raw: null, at: now }; views.set(id, v); }
+    if (raw !== v.raw) {
+      if (f.vy > 300 && v.vy <= 300) v.hop = 1;
+      if (f.y <= 0 && v.ty > 30) v.land = 1;
+      Object.assign(v, { tx: f.x, ty: f.y, vx: +f.vx || 0, vy: +f.vy || 0, raw, at: now });
+      if (Math.abs(v.tx - v.x) > 250) { v.x = v.tx; v.y = v.ty; } // a new point: jump there
+    }
+    const ahead = Math.min(0.12, (now - v.at) / 1000), gy = Math.max(0, v.ty + v.vy * ahead - CONFIG.slimeGravity * ahead * ahead / 2);
+    v.x += (v.tx + v.vx * ahead - v.x) * k; v.y += (gy - v.y) * k;
+    v.land = Math.max(0, v.land - dt * 4); v.hop = Math.max(0, v.hop - dt * 4);
+  }
+  for (const id of views.keys()) if (!seen.has(id)) views.delete(id);
+}
+/** Every slime to draw: { id, team, x, y, color, name, mine, bot, land, hop }. */
+function drawList(g) {
+  const out = [];
+  g.teams.forEach((list, team) => list.forEach((id) => {
+    const s = slimeOf(id); if (!s) return;
+    const p = S.entities.players[id] || {};
+    out.push({ id, team, x: s.x, y: s.y, land: s.land || 0, hop: s.hop || 0, bot: isBot(id), mine: id === net.sessionId, name: nameOf(id),
+      color: id === net.sessionId ? myColor : isBot(id) ? botColor(id) : p.c || "#ccc" });
+  }));
+  return out;
+}
+const parts = [], clouds = [[-0.3, 0.16, 1], [0.25, 0.1, 0.8], [0.62, 0.22, 1.2]];
+let spin = 0, lastFx = 0;
+function burst(x, y, color, n, speed, life = 0.6, grav = 900) { for (let i = 0; i < n; i++) { const a = Math.random() * Math.PI, s = speed * (0.3 + Math.random()); parts.push({ x, y, vx: Math.cos(a) * s * (Math.random() < 0.5 ? -1 : 1), vy: Math.sin(a) * s, life: life * (0.6 + Math.random() * 0.8), color, size: 4 + Math.random() * 5, grav }); } }
+function hitFx() { const now = performance.now(); if (now - lastFx < 60) return; lastFx = now; burst(ball.x, ball.y, "#ffffffdd", 8, 280, 0.35, 300); sfx("hit", Math.min(1, Math.hypot(ball.vx, ball.vy) / CONFIG.maxBall)); }
+function bumpFx() { sfx("wall"); }
+
+function draw(g, dt, now) {
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  shake *= Math.exp(-dt * 9);
+  const ox = (Math.random() - 0.5) * shake, oy = (Math.random() - 0.5) * shake;
+  // sky, sun, clouds, sea
+  const sky = ctx.createLinearGradient(0, 0, 0, GY); sky.addColorStop(0, "#5fb7e5"); sky.addColorStop(1, "#bfe9f7");
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = "#fff6c9"; ctx.beginPath(); ctx.arc(W * 0.82, GY - 520 * scale, 54 * scale, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#ffffffcc";
+  for (const [cx, cy, s] of clouds) {
+    const x = ((cx + now / 90000 + 1.5) % 2 - 0.5) * W * 1.2, y = GY - (VIEW_TOP - cy * VIEW_TOP) * scale * 0.95, k = s * scale;
+    for (const [dx, dy, r] of [[0, 0, 34], [36, 8, 26], [-34, 8, 24], [12, -16, 26]]) { ctx.beginPath(); ctx.arc(x + dx * k, y + dy * k, r * k, 0, Math.PI * 2); ctx.fill(); }
+  }
+  const seaY = GY - 70 * scale;
+  ctx.fillStyle = "#2f9fd0"; ctx.fillRect(0, seaY, W, GY - seaY);
+  ctx.fillStyle = "#ffffff55"; for (let x = (now / 30) % 60 - 60; x < W; x += 60) ctx.fillRect(x, seaY + 10 * scale + Math.sin(x / 40 + now / 500) * 3, 26, 3);
+  // the sand, tinted a little toward each side's color
+  ctx.fillStyle = "#f3d9a4"; ctx.fillRect(0, GY + oy, W, H - GY);
+  for (const k of [0, 1]) { ctx.fillStyle = SIDE_COLORS[k] + "26"; ctx.fillRect(k ? sx(NW) + ox : sx(-HW) + ox, GY + oy, (HW - NW) * scale, 10 * scale); }
+  ctx.fillStyle = "#e8c98c"; for (let i = 0; i < 40; i++) { const x = ((i * 137) % 1000) / 1000 * W, y = GY + 14 + ((i * 59) % 100) / 100 * (H - GY - 14); ctx.fillRect(x, y, 4, 2); }
+  ctx.strokeStyle = "#ffffffaa"; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(sx(-HW) + ox, GY + oy + 2); ctx.lineTo(sx(HW) + ox, GY + oy + 2); ctx.stroke();
+  // court space from here: court units, y up
+  ctx.setTransform(DPR * scale, 0, 0, -DPR * scale, DPR * (W / 2 + ox), DPR * (GY + oy));
+  for (const x of [-HW, HW]) { ctx.fillStyle = "#ffffff66"; ctx.fillRect(x - 3, 0, 6, 26); } // side markers
+  // the net: posts, mesh, top band
+  ctx.fillStyle = "#6b4f3a"; ctx.fillRect(-NW, 0, CONFIG.netW, CONFIG.netH);
+  ctx.fillStyle = "#ffffff"; ctx.fillRect(-NW - 3, CONFIG.netH - 12, CONFIG.netW + 6, 14);
+  ctx.strokeStyle = "#ffffff55"; ctx.lineWidth = 1.5; ctx.beginPath(); for (let y = 12; y < CONFIG.netH - 12; y += 14) { ctx.moveTo(-NW, y); ctx.lineTo(NW, y); } ctx.stroke();
+  // ball shadow on the sand
+  const bx = ball.x + pred.offX, by = ball.y + pred.offY, r = CONFIG.ballR;
+  pred.offX *= Math.exp(-dt * 12); pred.offY *= Math.exp(-dt * 12);
+  const far = clamp(by / 600, 0, 1);
+  ctx.fillStyle = `rgba(80,50,20,${0.28 - far * 0.18})`; ctx.beginPath(); ctx.ellipse(bx, 2, r * (1.2 - far * 0.5), r * 0.3, 0, 0, Math.PI * 2); ctx.fill();
+  // slimes
+  for (const s of drawList(g)) drawSlime(s, bx, by, now);
+  // the ball: a volleyball that spins with its sideways speed
+  spin -= (ball.vx * dt) / r;
+  ctx.save(); ctx.translate(bx, by); ctx.rotate(spin);
+  ctx.fillStyle = "#fffdf4"; ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+  ctx.save(); ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.clip();
+  ctx.fillStyle = "#ffcf3f"; ctx.beginPath(); ctx.arc(-r * 0.9, r * 0.9, r * 1.05, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#3a86ff"; ctx.beginPath(); ctx.arc(r * 1.05, r * 0.2, r * 0.8, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+  ctx.strokeStyle = "#2b2b3a"; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.arc(-r * 0.9, r * 0.9, r * 1.05, -0.9, 0.2); ctx.stroke(); ctx.beginPath(); ctx.arc(r * 1.05, r * 0.2, r * 0.8, 2.2, 3.9); ctx.stroke();
+  ctx.restore();
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i]; p.life -= dt; p.vy -= p.grav * dt; p.x += p.vx * dt; p.y += p.vy * dt;
+    if (p.life <= 0) { parts.splice(i, 1); continue; }
+    ctx.globalAlpha = Math.min(1, p.life * 2.5); ctx.fillStyle = p.color; ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+  }
+  ctx.globalAlpha = 1;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  if ((by - r) * scale > GY) { // the ball is above the screen: an arrow shows where
+    ctx.fillStyle = "#ffffffdd"; ctx.beginPath(); ctx.moveTo(sx(bx), 6); ctx.lineTo(sx(bx) - 10, 22); ctx.lineTo(sx(bx) + 10, 22); ctx.fill();
+  }
+  if (!ATTRACT) { // names, upright
+    ctx.textAlign = "center"; ctx.font = "700 12px system-ui, sans-serif"; ctx.lineWidth = 3; ctx.strokeStyle = "#0006";
+    for (const s of drawList(g)) { const label = s.mine ? "You" : s.name, x = sx(s.x) + ox, y = sy(s.y + R) + oy - 8; ctx.strokeText(label, x, y); ctx.fillStyle = s.mine ? "#ffd166" : "#fff"; ctx.fillText(label, x, y); }
+  }
+}
+/** A slime: a dome in its color, squashed when it lands and stretched when it hops, with an eye that watches the ball. */
+function drawSlime(s, bx, by, now) {
+  const sq = s.land * 0.22 - s.hop * 0.16, w = R * (1 + sq), h = R * (1 - sq), face = s.team === 0 ? 1 : -1;
+  ctx.fillStyle = "#00000022"; ctx.beginPath(); ctx.ellipse(s.x, 1, R * (1 - Math.min(0.5, s.y / 500)), 9, 0, 0, Math.PI * 2); ctx.fill();
+  if (s.mine) { ctx.strokeStyle = `rgba(255,255,255,${0.45 + Math.sin(now / 180) * 0.25})`; ctx.lineWidth = 5; ctx.beginPath(); ctx.ellipse(s.x, s.y, w + 7, h + 7, 0, 0, Math.PI); ctx.stroke(); }
+  const grad = ctx.createLinearGradient(0, s.y + h, 0, s.y); grad.addColorStop(0, s.color); grad.addColorStop(1, shade(s.color));
+  ctx.fillStyle = grad; ctx.beginPath(); ctx.ellipse(s.x, s.y, w, h, 0, 0, Math.PI); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "#ffffff40"; ctx.beginPath(); ctx.ellipse(s.x - face * w * 0.3, s.y + h * 0.62, w * 0.22, h * 0.14, -face * 0.5, 0, Math.PI * 2); ctx.fill();
+  const ex = s.x + face * w * 0.45, ey = s.y + h * 0.58, er = R * 0.17, dx = bx - ex, dy = by - ey, d = Math.hypot(dx, dy) || 1;
+  ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(ex, ey, er, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#1d1d2b"; ctx.beginPath(); ctx.arc(ex + (dx / d) * er * 0.5, ey + (dy / d) * er * 0.5, er * 0.5, 0, Math.PI * 2); ctx.fill();
+}
+/** A bot's color: one of the colors no person in the room is wearing, picked by its number. */
+function botColor(id) {
+  const used = Object.entries(S.entities.players || {}).map(([pid, p]) => (pid === net.sessionId ? myColor : p.c));
+  const free = COLORS.filter((c) => !used.includes(c));
+  return free[(+id.slice(1) - 1) % free.length] || "#ccc";
+}
+/** A darker version of a #rrggbb color (the bottom of a slime). */
+function shade(hex) { const n = parseInt(hex.slice(1), 16); return `rgb(${((n >> 16) & 255) * 0.7 | 0},${((n >> 8) & 255) * 0.7 | 0},${(n & 255) * 0.7 | 0})`; }
+
+// Sounds, made on the fly with WebAudio (no files).
+let audio = null;
+function unlockAudio() { if (!audio && !ATTRACT) try { audio = new AudioContext(); } catch {} }
+function sfx(kind, power = 1) {
+  if (!audio) return;
+  const t = audio.currentTime, o = audio.createOscillator(), gain = audio.createGain();
+  const [type, f0, f1, len, vol] = { hit: ["sine", 300 + power * 300, 700 + power * 400, 0.12, 0.3], wall: ["triangle", 240, 140, 0.07, 0.12], jump: ["sine", 200, 420, 0.1, 0.08],
+    point: ["square", 520, 1040, 0.35, 0.12], lose: ["sawtooth", 300, 110, 0.4, 0.1] }[kind];
+  o.type = type; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + len);
+  gain.gain.setValueAtTime(vol, t); gain.gain.exponentialRampToValueAtTime(0.001, t + len);
+  o.connect(gain).connect(audio.destination); o.start(t); o.stop(t + len + 0.02);
+}
+
+// ── HUD & RESULTS ───────────────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+let board = null, boardFor = -1, seen = { score: "", id: -1 }, msgUntil = 0;
+const startedAt = performance.now();
+function nameOf(id) {
+  if (id === net.sessionId) return myName;
+  if (isBot(id)) return BOT_NAMES[+id.slice(1)] || "Bot";
+  return String((S.entities.players[id] || {}).n || "Player");
+}
+const sideLabel = (g, k) => g.teams[k].map((id) => (id === net.sessionId ? "You" : nameOf(id))).join(" & ");
+function hud(g, now) {
+  const team = teamOf(g, net.sessionId), t = Date.now(), score = g.score.join("-");
+  if (seen.id === g.id && score !== seen.score && g.last >= 0) { // a point: shown from the state, so everyone sees it
+    const side = 1 - g.last;
+    burst(ball.x, CONFIG.ballR, "#e8c98c", 22, 420, 0.7); burst(away(side) * 250, 300, SIDE_COLORS[g.last], 30, 520, 1.1); shake = 12;
+    const mine = team === g.last;
+    $("msg").innerHTML = g.win >= 0 ? `<span style="color:${SIDE_COLORS[g.win]}">GAME!</span>` : team < 0 ? `<span style="color:${SIDE_COLORS[g.last]}">POINT</span>` : mine ? `<span style="color:${SIDE_COLORS[g.last]}">POINT!</span>` : `<span style="color:#fff">Missed it!</span>`;
+    msgUntil = now + CONFIG.pointMs; sfx(team < 0 || mine ? "point" : "lose");
+  }
+  if (seen.id !== g.id) msgUntil = 0;
+  seen.score = score; seen.id = g.id;
+  $("msg").classList.toggle("on", now < msgUntil);
+  for (const k of [0, 1]) { $("s" + k).textContent = g.score[k]; $("s" + k).style.color = SIDE_COLORS[k]; $("n" + k).textContent = sideLabel(g, k); }
+  $("to").textContent = `to ${CONFIG.pointsToWin}`;
+  if (ATTRACT) { $("hint").textContent = $("net").textContent = $("to").textContent = ""; for (const k of [0, 1]) $("n" + k).textContent = ""; return; }
+  $("hint").textContent = team < 0 ? "The court is full. You're in the next match." : `You're on the ${team === 0 ? "left" : "right"}. ${touchUI ? "◀ ▶ to move, JUMP to jump." : "A/D or arrows to move, W, ↑ or Space to jump."} Keep the ball off your sand!${touchUI && H > W ? " Turn your phone sideways for a bigger court." : ""}`;
+  $("hint").style.opacity = now - startedAt < 8000 || team < 0 ? 1 : 0;
+  const n = livePlayers().length;
+  $("net").textContent = net.offline ? "Offline: playing with bots" : `Online · ${n} player${n === 1 ? "" : "s"}${isHost() ? " · you run the ball" : ""}`;
+  const card = g.phase === "over" && t > g.overAt - CONFIG.resultsMs + 1200;
+  $("over").hidden = !card;
+  if (card) {
+    const won = team >= 0 && g.win === team;
+    $("winner").textContent = won ? "You win!" : `${sideLabel(g, g.win)} win${g.teams[g.win].length > 1 || g.teams[g.win][0] === net.sessionId ? "" : "s"}!`;
+    $("winner").style.color = SIDE_COLORS[g.win];
+    $("final").innerHTML = `<span style="color:${SIDE_COLORS[0]}">${g.score[0]}</span> – <span style="color:${SIDE_COLORS[1]}">${g.score[1]}</span>`;
+    $("again").hidden = team < 0;
+    $("again").textContent = myReady === g.id ? "Waiting for the others…" : "Play again";
+    $("next").textContent = `Next match in ${Math.max(0, Math.ceil((g.overAt - t) / 1000))}s`;
+    if (boardFor !== g.id) { boardFor = g.id; showBoard(won); }
+  }
+}
+function showBoard(won) {
+  const list = $("board");
+  if (!board) { list.innerHTML = "<li>Leaderboards need a connection.</li>"; return; }
+  list.innerHTML = "<li>Loading…</li>";
+  (won ? board.submit(1, "inc").catch(() => null) : Promise.resolve()).then(() => board.top(10)).then(({ entries }) => {
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score}</span></li>`).join("") : "<li>No wins yet. Be the first.</li>";
+  }).catch(() => { list.innerHTML = "<li>Couldn't load the leaderboard.</li>"; });
+}
+$("again").onclick = () => { const g = game(); if (g && g.phase === "over") { myReady = g.id; net.me.set("rdy", g.id); } };
+
+/** Two players picked the same color at once (the joiner's first state can be empty): the later sessionId picks again. */
+function fixColor() {
+  const others = Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId);
+  if (!others.some(([id, p]) => p.c === myColor && id < net.sessionId)) return;
+  const taken = new Set(others.map(([, p]) => p.c));
+  myColor = COLORS.find((c) => !taken.has(c)) || myColor; net.me.set("c", myColor);
+}
+
+// ── INPUT ───────────────────────────────────────────────────────────────────────────
+const touchUI = matchMedia("(pointer: coarse)").matches && !ATTRACT;
+const keys = new Set(), pressed = new Set(); // held keys, and presses not handled yet
+const JUMP_KEYS = ["w", "arrowup", " ", "k", "pad:jump"];
+/** [direction -1..1, jump pressed this frame] from the keys or the buttons. */
+function myInput() {
+  const dir = (keys.has("arrowright") || keys.has("d") || keys.has("pad:right") ? 1 : 0) - (keys.has("arrowleft") || keys.has("a") || keys.has("pad:left") ? 1 : 0);
+  const jump = JUMP_KEYS.some((k) => pressed.has(k) || keys.has(k)); // holding jump keeps hopping
+  if (jump && me.y <= 0) sfx("jump");
+  pressed.clear();
+  return [dir, jump];
+}
+addEventListener("keydown", (e) => {
+  const k = e.key.toLowerCase(); unlockAudio();
+  if (["arrowleft", "arrowright", "arrowup", "arrowdown", " "].includes(k)) e.preventDefault();
+  if (!e.repeat) pressed.add(k);
+  keys.add(k);
+});
+addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
+addEventListener("blur", () => keys.clear());
+cv.addEventListener("pointerdown", (e) => { e.preventDefault(); unlockAudio(); });
+$("move").hidden = $("acts").hidden = !touchUI;
+for (const b of document.querySelectorAll(".pad button")) {
+  const k = "pad:" + b.dataset.k;
+  b.addEventListener("pointerdown", (e) => { e.preventDefault(); unlockAudio(); b.setPointerCapture(e.pointerId); keys.add(k); pressed.add(k); b.classList.add("on"); });
+  for (const ev of ["pointerup", "pointercancel"]) b.addEventListener(ev, () => { keys.delete(k); b.classList.remove("on"); });
+}
+document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+
+// ── MAIN LOOP ───────────────────────────────────────────────────────────────────────
+let last = performance.now(), lastHb = 0, lastHud = 0;
+function frame(now) {
+  const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = now; // the first frame can be stamped before `last`
+  if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); fixColor(); }
+  syncViews(dt);
+  if (isHost()) hostTick(dt, now); else host.wasHost = false;
+  const g = game();
+  if (g) {
+    myTick(dt, g, now);
+    draw(g, dt, now);
+    if (now - lastHud > 100) { lastHud = now; hud(g, now); }
+  }
+  requestAnimationFrame(frame);
+}
+
+(async function start() {
+  net = await connect();
+  net.onState((st) => { S = st; });
+  net.on("hit", (msg, from) => { if (isHost() && msg) applyHit(msg, from); });
+  net.onDisconnect(() => { $("net").textContent = "Reconnecting…"; });
+  if (!net.offline && typeof MP !== "undefined") board = MP.auth({ key: MP_CONNECT.key, apiUrl: MP_CONNECT.apiUrl }).leaderboard(CONFIG.board);
+  const taken = new Set(Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId).map(([, p]) => p.c));
+  myColor = COLORS.find((c) => !taken.has(c)) || COLORS[Math.floor(Math.random() * COLORS.length)];
+  net.me.set({ n: myName, c: myColor, hb: Date.now() });
+  if (ATTRACT) Object.assign(CONFIG, { teamSize: 2, servePause: 400, pointMs: 700, pointsToWin: 99, botMiss: 0.35, botReact: 400 });
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

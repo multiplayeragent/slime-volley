@@ -259,7 +259,10 @@ function newGame(id) {
 }
 /** Everyone to their spot (bots here; people move themselves when they see `pt` change) and the ball up over the server. */
 function serveReset(g) {
-  for (const b of host.bots.values()) { const k = teamOf(g, b.id); if (k >= 0) Object.assign(b, { x: homeOf(k, g.teams[k].indexOf(b.id), g.teams[k].length), y: 0, vx: 0, vy: 0 }); }
+  for (const b of host.bots.values()) { // a serve is a fresh ball: no misread left over from the last rally, and the server stands well behind it so the bump carries over the net
+    const k = teamOf(g, b.id); if (k < 0) continue;
+    Object.assign(b, { x: homeOf(k, g.teams[k].indexOf(b.id), g.teams[k].length), y: 0, vx: 0, vy: 0, seenH: ball.h, miss: 0, off: R * (0.45 + Math.random() * 0.25), reactAt: 0 });
+  }
   const sx = homeOf(g.serve, 0, g.teams[g.serve].length) - away(g.serve) * 14; // a little toward the net, so a plain bump goes forward
   Object.assign(ball, { x: sx, y: 330, vx: 0, vy: 0, z: 1 }); host.pending = null; writeBall();
 }
